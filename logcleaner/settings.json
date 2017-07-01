@@ -7,9 +7,17 @@
         ],
         "Enrich": ["FromLogContext"]
     },
-    "Application":{
+    "ApplicationSettings":{
         "PathToLogDirectory": ["/Users/vishal/Documents/logs/first","/Users/vishal/Documents/logs/second"],
         "FileTypesToArchive":"*.txt,*.csv",
-        "FileRetentionDays": 0
+        "FileRetentionDays": 0,
+        "ZipFileRetentionDays": 0,
+        "FreeSpaceThresholdPercentage":20
+    },
+    "MailSettings":{
+        "From":"vishal_saxena@optum.com",
+        "To":"vishal_saxena@optum.com",
+        "SmtpServer":"mailo2.uhc.com",
+        "Subject":"Daily File Archival"
     }
 }

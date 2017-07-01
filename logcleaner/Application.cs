@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Linq;
 using Microsoft.Extensions.Configuration;
 using Serilog;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace logcleaner
@@ -19,69 +20,114 @@ namespace logcleaner
         public ILogger Logger { get; private set; }
         public void Run()
         {
-            var logDirs = Config.GetSection("Application:PathToLogDirectory").GetChildren().Select(x=>x.Value);
-            var searchPatterns = Config.GetSection("Application").GetValue<string>("FileTypesToArchive")
-            .Split(",".ToCharArray(),StringSplitOptions.RemoveEmptyEntries);
-            var fileRetentionDays = Config.GetSection("Application").GetValue<int>("FileRetentionDays");
-            var drvs = new List<string>();
-            foreach (var logDir in logDirs)
-            {
-                Logger.Information($"The path to log directory: {logDir}");
-                var rootDrive = Path.GetPathRoot(logDir);
-                if(!drvs.Contains(rootDrive))
-                {
-                    drvs.Add(rootDrive);
-                    Logger.Information($"The drive is : {rootDrive}");
-                    var drive = DriveInfo.GetDrives().Where(d=>d.Name == rootDrive).FirstOrDefault();
-                    var freeSpacePercent = ((decimal)drive.TotalFreeSpace/drive.TotalSize)*100;
-                    Logger.Information($"Total free space on drive: {freeSpacePercent.ToString("#.##")}%");
-                }
-                var filesToArchive = new List<string>();
-                foreach (var searchPattern in searchPatterns)
-                {
-                    foreach (var file in Directory.EnumerateFiles(logDir,searchPattern,SearchOption.AllDirectories))
-                    {
+            // Get Configuration
+            var logDirs = Config.GetSection("ApplicationSettings:PathToLogDirectory").GetChildren().Select(x=>x.Value).ToList();
+            var searchPatterns = Config.GetSection("ApplicationSettings").GetValue<string>("FileTypesToArchive").Split(",".ToCharArray(),
+                                                                                    StringSplitOptions.RemoveEmptyEntries);
+            var fileRetentionDays = Config.GetSection("ApplicationSettings").GetValue<int>("FileRetentionDays");
+            var zipFileRetentionDays = Config.GetSection("ApplicationSettings").GetValue<int>("ZipFileRetentionDays");
+            var freeSpaceThresholdPercentage = Config.GetSection("ApplicationSettings").GetValue<int>("FreeSpaceThresholdPercentage");
 
-                        var fileInfo = new FileInfo(file);
-                        if(fileInfo.LastWriteTime.Date <= DateTime.Today.AddDays(-1*fileRetentionDays)){
-                            filesToArchive.Add(file);
-                        }
-                    }    
-                }        
-                // Create Zip and delete files
-                var zipFileName = Path.Combine(logDir,$"logArchive{DateTime.Now.ToString("yyyyMMdd")}.zip");
-                using(var zipStream = File.Open(zipFileName,FileMode.OpenOrCreate))
+            var mailFrom = Config.GetSection("MailSettings").GetValue<string>("From");
+            var mailTo = Config.GetSection("MailSettings").GetValue<string>("To");
+            var mailSubject = Config.GetSection("MailSettings").GetValue<string>("Subject");
+            var mailServer = Config.GetSection("MailSettings").GetValue<string>("SmtpServer");
+            //loop each path and clean the logs
+            foreach (var logDir in logDirs)
+            {           
+                // Find files to archive
+                var filesToArchive = FindFiles(searchPatterns, fileRetentionDays, logDir);
+                // Find zip files to archive
+                var zipFilesToArchive = FindFiles(new[] { "*.zip" }, zipFileRetentionDays, logDir);
+                // Create Zip File
+                var zipFileName = Path.Combine(logDir, $"logArchive{DateTime.Now.ToString("yyyyMMdd")}.zip");
+                ZipFiles(filesToArchive, zipFileName);
+                // Delete files
+                DeleteFiles(filesToArchive);
+                // Delete zip files
+                DeleteFiles(zipFilesToArchive);
+            }
+            //Find unique drives to check
+            var drives = new List<string>();
+            logDirs.ForEach((dir)=>
+            {
+                drives.Add(Path.GetPathRoot(dir));
+            });
+            drives = drives.Distinct().ToList();
+            DriveInfo.GetDrives().ToList().ForEach((drv)=>{
+                if(drives.Contains(drv.Name)){
+                    Logger.Information($"Drive name: {drv.Name}");
+                    var freeSpacePercent = ((decimal)drv.TotalFreeSpace / drv.TotalSize) * 100;
+                    Logger.Information($"Total free space on drive: {freeSpacePercent.ToString("#.##")}%");
+                    if(freeSpacePercent <= freeSpaceThresholdPercentage){
+                        SendMail(drv.Name,freeSpacePercent,freeSpaceThresholdPercentage);
+                    }
+                }
+            });
+        }
+
+        private void SendMail(string name, decimal freeSpacePercent, int freeSpaceThresholdPercentage)
+        {
+            var message = $@"Free space percent on Drive: {name}
+             On Machine {Environment.MachineName} is {freeSpacePercent.ToString("#.##")}% 
+             Which is less than threshold {freeSpaceThresholdPercentage}% 
+             After cleaning archive files. Please check";
+            Logger.Information(message);
+        }
+
+        private void DeleteFiles(List<string>filesToDelete)
+        {
+           foreach (var file in filesToDelete)
+           {
+               try
+               {
+                   File.Delete(file);
+                   Logger.Information($"Deleted File with name: {file}");
+               }
+               catch (Exception ex)
+               {
+                   Logger.Error($"Unable to delete file with name: {file}, due to exception: {ex.Message}");
+               }
+           }
+        }
+
+        private void ZipFiles(List<string> filesToArchive, string zipFileName)
+        {
+            using (var zipStream = File.Open(zipFileName, FileMode.OpenOrCreate))
+            {
+                Logger.Information($"Created/Opened zip file name: {zipFileName}");
+
+                using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Update))
                 {
-                    using(var archive = new ZipArchive(zipStream,ZipArchiveMode.Update))
+                    foreach (var file in filesToArchive)
                     {
-                        foreach (var file in filesToArchive)
+                        var fileEntry = archive.CreateEntry(Path.GetFileName(file), CompressionLevel.Optimal);
+                        using (var fileWriter = new StreamWriter(fileEntry.Open()))
                         {
-                            var fileEntry = archive.CreateEntry(Path.GetFileName(file),CompressionLevel.Optimal);
-                            using(var fileWriter = new StreamWriter(fileEntry.Open()))
-                            {
-                                fileWriter.Write(File.ReadAllText(file));
-                            }
-                            try
-                            {
-                                File.Delete(file);
-                                Logger.Information($"File archived with name: {file}");
-                            }
-                            catch (Exception ex)
-                            {
-                                    Logger.Error(ex.Message);
-                            }
+                            fileWriter.Write(File.ReadAllText(file));
+                            Logger.Information($"Zipped file with name: {file}");
                         }
                     }
                 }
             }
-            
-            // delete the zipped files
+        }
 
-            // find all the zip files older retention date
-            // delete the zip files
-            // Log current drive space
-            // send mail if total space is less than 20% of drive space
+        private List<string>  FindFiles(string[] searchPatterns, int fileRetentionDays, string pathToDir)
+        {
+            var filesToArchive = new List<string>();
+            foreach (var searchPattern in searchPatterns)
+            {
+                foreach (var file in Directory.EnumerateFiles(pathToDir, searchPattern, SearchOption.AllDirectories))
+                {
 
+                    var fileInfo = new FileInfo(file);
+                    if (fileInfo.LastWriteTime.Date <= DateTime.Today.AddDays(-1 * fileRetentionDays))
+                    {
+                        filesToArchive.Add(file);
+                    }
+                }
+            }
+            return filesToArchive;
         }
     }
 }
