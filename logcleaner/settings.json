@@ -1,0 +1,15 @@
+{
+    "Serilog": {
+        "Using":  ["Serilog.Sinks.Literate","Serilog.Sinks.RollingFile"],
+        "WriteTo": [
+        { "Name": "LiterateConsole" },
+        { "Name": "RollingFile", "Args": { "pathFormat": "log-{Date}.txt", "outputTemplate":"{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level}] {Message}{NewLine}{Exception}" } }
+        ],
+        "Enrich": ["FromLogContext"]
+    },
+    "Application":{
+        "PathToLogDirectory": ["/Users/vishal/Documents/logs/first","/Users/vishal/Documents/logs/second"],
+        "FileTypesToArchive":"*.txt,*.csv",
+        "FileRetentionDays": 0
+    }
+}
