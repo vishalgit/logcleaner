@@ -6,6 +6,8 @@ using Microsoft.Extensions.Configuration;
 using Serilog;
 using System.Collections;
 using System.Collections.Generic;
+using MimeKit;
+using MailKit.Net.Smtp;
 
 namespace logcleaner
 {
@@ -27,11 +29,8 @@ namespace logcleaner
             var fileRetentionDays = Config.GetSection("ApplicationSettings").GetValue<int>("FileRetentionDays");
             var zipFileRetentionDays = Config.GetSection("ApplicationSettings").GetValue<int>("ZipFileRetentionDays");
             var freeSpaceThresholdPercentage = Config.GetSection("ApplicationSettings").GetValue<int>("FreeSpaceThresholdPercentage");
+          
 
-            var mailFrom = Config.GetSection("MailSettings").GetValue<string>("From");
-            var mailTo = Config.GetSection("MailSettings").GetValue<string>("To");
-            var mailSubject = Config.GetSection("MailSettings").GetValue<string>("Subject");
-            var mailServer = Config.GetSection("MailSettings").GetValue<string>("SmtpServer");
             //loop each path and clean the logs
             foreach (var logDir in logDirs)
             {           
@@ -68,11 +67,32 @@ namespace logcleaner
 
         private void SendMail(string name, decimal freeSpacePercent, int freeSpaceThresholdPercentage)
         {
+            var mailFrom = Config.GetSection("MailSettings").GetValue<string>("From");
+            var mailTo = Config.GetSection("MailSettings").GetValue<string>("To");
+            var mailSubject = Config.GetSection("MailSettings").GetValue<string>("Subject");
+            var mailServer = Config.GetSection("MailSettings").GetValue<string>("SmtpServer");
+            var pathFormat = Config.GetSection("Serilog:WriteTo:Args").GetValue<string>("pathFormat");
+            
             var message = $@"Free space percent on Drive: {name}
              On Machine {Environment.MachineName} is {freeSpacePercent.ToString("#.##")}% 
              Which is less than threshold {freeSpaceThresholdPercentage}% 
              After cleaning archive files. Please check";
             Logger.Information(message);
+            var mailMessage = new MimeMessage();
+            mailMessage.From.Add(new MailboxAddress(mailFrom));
+            mailMessage.To.Add(new MailboxAddress(mailTo));
+            mailMessage.Subject = mailSubject;
+            var builder = new BodyBuilder();
+            builder.TextBody = message;
+            var logFileName = pathFormat.Replace("{Date}",DateTime.Today.ToString("yyyyMMdd"));
+            builder.Attachments.Add(logFileName);
+            mailMessage.Body = builder.ToMessageBody();
+            using(var smtpClient = new SmtpClient())
+            {
+                smtpClient.Connect(mailServer);
+                smtpClient.Send(mailMessage);
+                smtpClient.Disconnect(true);
+            }
         }
 
         private void DeleteFiles(List<string>filesToDelete)
