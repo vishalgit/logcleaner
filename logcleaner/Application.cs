@@ -8,6 +8,8 @@ using System.Collections;
 using System.Collections.Generic;
 using MimeKit;
 using MailKit.Net.Smtp;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace logcleaner
 {
@@ -50,33 +52,36 @@ namespace logcleaner
             var drives = new List<string>();
             logDirs.ForEach((dir)=>
             {
-                drives.Add(Path.GetPathRoot(dir));
+                drives.Add(Path.GetPathRoot(dir).ToLower());
             });
             drives = drives.Distinct().ToList();
             DriveInfo.GetDrives().ToList().ForEach((drv)=>{
-                if(drives.Contains(drv.Name)){
+                if(drives.Contains(drv.Name.ToLower())){
                     Logger.Information($"Drive name: {drv.Name}");
                     var freeSpacePercent = ((decimal)drv.TotalFreeSpace / drv.TotalSize) * 100;
                     Logger.Information($"Total free space on drive: {freeSpacePercent.ToString("#.##")}%");
                     if(freeSpacePercent <= freeSpaceThresholdPercentage){
-                        SendMail(drv.Name,freeSpacePercent,freeSpaceThresholdPercentage);
+                        var tsk = SendMail(drv.Name,freeSpacePercent,freeSpaceThresholdPercentage);
+                        tsk.Wait();
                     }
                 }
             });
         }
 
-        private void SendMail(string name, decimal freeSpacePercent, int freeSpaceThresholdPercentage)
+        private async Task SendMail(string name, decimal freeSpacePercent, int freeSpaceThresholdPercentage)
         {
             var mailFrom = Config.GetSection("MailSettings").GetValue<string>("From");
             var mailTo = Config.GetSection("MailSettings").GetValue<string>("To");
             var mailSubject = Config.GetSection("MailSettings").GetValue<string>("Subject");
             var mailServer = Config.GetSection("MailSettings").GetValue<string>("SmtpServer");
-            var pathFormat = Config.GetSection("Serilog:WriteTo:Args").GetValue<string>("pathFormat");
+            var pathFormat = Config.GetSection("Serilog:WriteTo").GetChildren().ToList()[1].GetSection("Args").GetValue<string>("pathFormat");
             
-            var message = $@"Free space percent on Drive: {name}
-             On Machine {Environment.MachineName} is {freeSpacePercent.ToString("#.##")}% 
-             Which is less than threshold {freeSpaceThresholdPercentage}% 
-             After cleaning archive files. Please check";
+            var message = $@"
+            Drive: {name}
+            Machine: {Environment.MachineName} 
+            FreeSpace: {freeSpacePercent.ToString("#.##")}% 
+            FreeSpaceThreshold: {freeSpaceThresholdPercentage}% 
+            Please check server space.";
             Logger.Information(message);
             var mailMessage = new MimeMessage();
             mailMessage.From.Add(new MailboxAddress(mailFrom));
@@ -85,7 +90,12 @@ namespace logcleaner
             var builder = new BodyBuilder();
             builder.TextBody = message;
             var logFileName = pathFormat.Replace("{Date}",DateTime.Today.ToString("yyyyMMdd"));
-            builder.Attachments.Add(logFileName);
+            using (var fs = new FileStream(logFileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var sr = new StreamReader(fs, Encoding.ASCII)) {
+                var log = await sr.ReadToEndAsync();
+                File.WriteAllText("log.txt",log);
+            }
+            builder.Attachments.Add("log.txt");
             mailMessage.Body = builder.ToMessageBody();
             using(var smtpClient = new SmtpClient())
             {

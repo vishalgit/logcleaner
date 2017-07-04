@@ -3,16 +3,16 @@
         "Using":  ["Serilog.Sinks.Literate","Serilog.Sinks.RollingFile"],
         "WriteTo": [
         { "Name": "LiterateConsole" },
-        { "Name": "RollingFile", "Args": { "pathFormat": "log-{Date}.txt", "outputTemplate":"{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level}] {Message}{NewLine}{Exception}" } }
+        { "Name": "RollingFile", "Args": { "pathFormat": "C:\\Work\\log-{Date}.txt", "outputTemplate":"{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level}] {Message}{NewLine}{Exception}" } }
         ],
         "Enrich": ["FromLogContext"]
     },
     "ApplicationSettings":{
-        "PathToLogDirectory": ["/Users/vishal/Documents/logs/first","/Users/vishal/Documents/logs/second"],
+        "PathToLogDirectory": ["c:\\work\\logs"],
         "FileTypesToArchive":"*.txt,*.csv",
         "FileRetentionDays": 0,
         "ZipFileRetentionDays": 0,
-        "FreeSpaceThresholdPercentage":20
+        "FreeSpaceThresholdPercentage":90
     },
     "MailSettings":{
         "From":"vishal_saxena@optum.com",
