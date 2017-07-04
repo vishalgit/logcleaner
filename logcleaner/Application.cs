@@ -148,7 +148,6 @@ namespace logcleaner
                 }
             }
             return filesToArchive;
-            
         }
     }
 }
